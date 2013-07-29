@@ -135,4 +135,8 @@ static inline int rwsem_atomic_update(int delta, struct rw_semaphore *sem)
 }
 
 #endif /* __KERNEL__ */
+<<<<<<< HEAD
 #endif /* _ASM_ARM_RWSEM_H */
+=======
+#endif /* _ASM_ARM_RWSEM_H */
+>>>>>>> e38a107... Optimized ARM RWSEM algorithm
