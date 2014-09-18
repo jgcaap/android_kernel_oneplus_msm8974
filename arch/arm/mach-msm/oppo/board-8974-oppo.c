@@ -80,6 +80,7 @@ static struct persistent_ram msm_pr __initdata = {
 void __init msm_8974_reserve(void)
 {
 #ifdef CONFIG_KEXEC_HARDBOOT
+<<<<<<< HEAD
 	// Reserve space for hardboot page - just after ram_console,
 	// at the start of second memory bank
 	int ret;
@@ -94,6 +95,12 @@ void __init msm_8974_reserve(void)
 	bank = &meminfo.bank[1];
 	start = bank->start + SZ_1M + OPPO_PERSISTENT_RAM_SIZE;
 	ret = memblock_remove(start, SZ_1M);
+=======
+	// Reserve space for hardboot page, just before the ram_console
+	struct membank* bank = &meminfo.bank[0];
+	phys_addr_t start = bank->start + bank->size - SZ_1M - OPPO_PERSISTENT_RAM_SIZE;
+	int ret = memblock_remove(start, SZ_1M);
+>>>>>>> 1f5417b... kexec: Implement kexec-hardboot
 	if(!ret)
 		pr_info("Hardboot page reserved at 0x%X\n", start);
 	else
