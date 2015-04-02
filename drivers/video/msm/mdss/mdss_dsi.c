@@ -1061,6 +1061,10 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		if (ctrl_pdata->off_cmds.link_state == DSI_LP_MODE)
 			rc = mdss_dsi_blank(pdata, power_state);
 		rc = mdss_dsi_off(pdata, power_state);
+#ifdef CONFIG_STATE_NOTIFIER
+		if (!use_fb_notifier)
+			state_notifier_call_chain(STATE_NOTIFIER_SUSPEND, NULL);
+#endif
 		break;
 #ifdef CONFIG_STATE_NOTIFIER
 		if (!use_fb_notifier)
