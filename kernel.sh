@@ -59,7 +59,7 @@ function make_modules {
 }
 
 function make_dtb {
-		$REPACK_DIR/tools/dtbToolCM -2 -o $REPACK_DIR/$DTBIMAGE -s 2048 -p scripts/dtc/ arch/arm/boot/
+		dtbToolCM -2 -o /home/jgcaap/new/anykernel/dtb -s 2048 -p /home/jgcaap/msm8974/scripts/dtc/ /home/jgcaap/msm8974/arch/arm/boot/
 }
 
 function make_zip {
