@@ -20,6 +20,7 @@ VER=".CM12.1"
 AK_VER="$BASE_AK_VER$VER"
 
 # Vars
+export USE_CCACHE=1
 export CROSS_COMPILE=${HOME}/android/prebuilts/gcc/linux-x86/arm/Stock/arm-eabi-4.8/bin/arm-eabi-
 export ARCH=arm
 export SUBARCH=arm
