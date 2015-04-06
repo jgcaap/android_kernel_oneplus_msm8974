@@ -190,6 +190,9 @@ void f2fs_balance_fs(struct f2fs_sb_info *sbi)
 
 void f2fs_balance_fs_bg(struct f2fs_sb_info *sbi)
 {
+	/* try to shrink extent cache when there is no enough memory */
+	f2fs_shrink_extent_tree(sbi, EXTENT_CACHE_SHRINK_NUMBER);
+
 	/* check the # of cached NAT entries and prefree segments */
 	if (try_to_free_nats(sbi, NAT_ENTRY_PER_BLOCK) ||
 				excess_prefree_segs(sbi))
@@ -428,7 +431,7 @@ static void add_discard_addrs(struct f2fs_sb_info *sbi,
 	int max_blocks = sbi->blocks_per_seg;
 	unsigned long *cur_map = (unsigned long *)se->cur_valid_map;
 	unsigned long *ckpt_map = (unsigned long *)se->ckpt_valid_map;
-	unsigned long dmap[entries];
+	unsigned long *dmap = SIT_I(sbi)->tmp_map;
 	unsigned int start = 0, end = -1;
 	int i;
 
@@ -449,11 +452,8 @@ static void add_discard_addrs(struct f2fs_sb_info *sbi,
 			break;
 
 		end = __find_rev_next_zero_bit(dmap, max_blocks, start + 1);
-
-		new = f2fs_kmem_cache_alloc(discard_entry_slab, GFP_NOFS);
-		INIT_LIST_HEAD(&new->list);
-		new->blkaddr = START_BLOCK(sbi, segno) + start;
-		new->len = end - start;
+		if (force && end - start < cpc->trim_minlen)
+			continue;
 
 		list_add_tail(&new->list, head);
 		SM_I(sbi)->nr_discards += end - start;
@@ -683,7 +683,7 @@ static void get_new_segment(struct f2fs_sb_info *sbi,
 	int go_left = 0;
 	int i;
 
-	write_lock(&free_i->segmap_lock);
+	spin_lock(&free_i->segmap_lock);
 
 	if (!new_sec && ((*newseg + 1) % sbi->segs_per_sec)) {
 		segno = find_next_zero_bit(free_i->free_segmap,
@@ -756,7 +756,7 @@ got_it:
 	f2fs_bug_on(test_bit(segno, free_i->free_segmap));
 	__set_inuse(sbi, segno);
 	*newseg = segno;
-	write_unlock(&free_i->segmap_lock);
+	spin_unlock(&free_i->segmap_lock);
 }
 
 static void reset_curseg(struct f2fs_sb_info *sbi, int type, int modified)
@@ -807,7 +807,7 @@ static void __next_free_blkoff(struct f2fs_sb_info *sbi,
 {
 	struct seg_entry *se = get_seg_entry(sbi, seg->segno);
 	int entries = SIT_VBLOCK_MAP_SIZE / sizeof(unsigned long);
-	unsigned long target_map[entries];
+	unsigned long *target_map = SIT_I(sbi)->tmp_map;
 	unsigned long *ckpt_map = (unsigned long *)se->ckpt_valid_map;
 	unsigned long *cur_map = (unsigned long *)se->cur_valid_map;
 	int i, pos;
@@ -924,6 +924,44 @@ void allocate_new_segments(struct f2fs_sb_info *sbi)
 static const struct segment_allocation default_salloc_ops = {
 	.allocate_segment = allocate_segment_by_default,
 };
+
+int f2fs_trim_fs(struct f2fs_sb_info *sbi, struct fstrim_range *range)
+{
+	__u64 start = F2FS_BYTES_TO_BLK(range->start);
+	__u64 end = start + F2FS_BYTES_TO_BLK(range->len) - 1;
+	unsigned int start_segno, end_segno;
+	struct cp_control cpc;
+
+	if (range->minlen > SEGMENT_SIZE(sbi) || start >= MAX_BLKADDR(sbi) ||
+						range->len < sbi->blocksize)
+		return -EINVAL;
+
+	cpc.trimmed = 0;
+	if (end <= MAIN_BLKADDR(sbi))
+		goto out;
+
+	/* start/end segment number in main_area */
+	start_segno = (start <= MAIN_BLKADDR(sbi)) ? 0 : GET_SEGNO(sbi, start);
+	end_segno = (end >= MAX_BLKADDR(sbi)) ? MAIN_SEGS(sbi) - 1 :
+						GET_SEGNO(sbi, end);
+	cpc.reason = CP_DISCARD;
+	cpc.trim_minlen = F2FS_BYTES_TO_BLK(range->minlen);
+
+	/* do checkpoint to issue discard commands safely */
+	for (; start_segno <= end_segno; start_segno = cpc.trim_end + 1) {
+		cpc.trim_start = start_segno;
+		cpc.trim_end = min_t(unsigned int, rounddown(start_segno +
+				BATCHED_TRIM_SEGMENTS(sbi),
+				sbi->segs_per_sec) - 1, end_segno);
+
+		mutex_lock(&sbi->gc_mutex);
+		write_checkpoint(sbi, &cpc);
+		mutex_unlock(&sbi->gc_mutex);
+	}
+out:
+	range->len = F2FS_BLK_TO_BYTES(cpc.trimmed);
+	return 0;
+}
 
 static bool __has_curseg_space(struct f2fs_sb_info *sbi, int type)
 {
@@ -1241,7 +1279,7 @@ static int read_normal_summaries(struct f2fs_sb_info *sbi, int type)
 		segno = le32_to_cpu(ckpt->cur_data_segno[type]);
 		blk_off = le16_to_cpu(ckpt->cur_data_blkoff[type -
 							CURSEG_HOT_DATA]);
-		if (is_set_ckpt_flags(ckpt, CP_UMOUNT_FLAG))
+		if (__exist_node_summaries(sbi))
 			blk_addr = sum_blk_addr(sbi, NR_CURSEG_TYPE, type);
 		else
 			blk_addr = sum_blk_addr(sbi, NR_CURSEG_DATA_TYPE, type);
@@ -1250,7 +1288,7 @@ static int read_normal_summaries(struct f2fs_sb_info *sbi, int type)
 							CURSEG_HOT_NODE]);
 		blk_off = le16_to_cpu(ckpt->cur_node_blkoff[type -
 							CURSEG_HOT_NODE]);
-		if (is_set_ckpt_flags(ckpt, CP_UMOUNT_FLAG))
+		if (__exist_node_summaries(sbi))
 			blk_addr = sum_blk_addr(sbi, NR_CURSEG_NODE_TYPE,
 							type - CURSEG_HOT_NODE);
 		else
@@ -1261,7 +1299,7 @@ static int read_normal_summaries(struct f2fs_sb_info *sbi, int type)
 	sum = (struct f2fs_summary_block *)page_address(new);
 
 	if (IS_NODESEG(type)) {
-		if (is_set_ckpt_flags(ckpt, CP_UMOUNT_FLAG)) {
+		if (__exist_node_summaries(sbi)) {
 			struct f2fs_summary *ns = &sum->entries[0];
 			int i;
 			for (i = 0; i < sbi->blocks_per_seg; i++, ns++) {
@@ -1303,6 +1341,11 @@ static int restore_curseg_summaries(struct f2fs_sb_info *sbi)
 			return -EINVAL;
 		type = CURSEG_HOT_NODE;
 	}
+
+
+	if (__exist_node_summaries(sbi))
+		ra_meta_pages(sbi, sum_blk_addr(sbi, NR_CURSEG_TYPE, type),
+					NR_CURSEG_TYPE - type, META_CP);
 
 	for (; type <= CURSEG_COLD_NODE; type++) {
 		err = read_normal_summaries(sbi, type);
@@ -1397,8 +1440,7 @@ void write_data_summaries(struct f2fs_sb_info *sbi, block_t start_blk)
 
 void write_node_summaries(struct f2fs_sb_info *sbi, block_t start_blk)
 {
-	if (is_set_ckpt_flags(F2FS_CKPT(sbi), CP_UMOUNT_FLAG))
-		write_normal_summaries(sbi, start_blk, CURSEG_HOT_NODE);
+	write_normal_summaries(sbi, start_blk, CURSEG_HOT_NODE);
 }
 
 int lookup_journal_in_cursum(struct f2fs_summary_block *sum, int type,
@@ -1510,6 +1552,9 @@ void flush_sit_entries(struct f2fs_sb_info *sbi)
 	mutex_lock(&curseg->curseg_mutex);
 	mutex_lock(&sit_i->sentry_lock);
 
+	if (!sit_i->dirty_sentries)
+		goto out;
+
 	/*
 	 * "flushed" indicates whether sit entries in journal are flushed
 	 * to the SIT area or not.
@@ -1520,11 +1565,27 @@ void flush_sit_entries(struct f2fs_sb_info *sbi)
 		struct seg_entry *se = get_seg_entry(sbi, segno);
 		int sit_offset, offset;
 
-		sit_offset = SIT_ENTRY_OFFSET(sit_i, segno);
+	/*
+	 * there are two steps to flush sit entries:
+	 * #1, flush sit entries to journal in current cold data summary block.
+	 * #2, flush sit entries to sit page.
+	 */
+	list_for_each_entry_safe(ses, tmp, head, set_list) {
+		struct page *page = NULL;
+		struct f2fs_sit_block *raw_sit = NULL;
+		unsigned int start_segno = ses->start_segno;
+		unsigned int end = min(start_segno + SIT_ENTRY_PER_BLOCK,
+						(unsigned long)MAIN_SEGS(sbi));
+		unsigned int segno = start_segno;
 
-		/* add discard candidates */
-		if (SM_I(sbi)->nr_discards < SM_I(sbi)->max_discards)
-			add_discard_addrs(sbi, segno, se);
+		if (to_journal &&
+			!__has_cursum_space(sum, ses->entry_cnt, SIT_JOURNAL))
+			to_journal = false;
+
+		if (!to_journal) {
+			page = get_next_sit_page(sbi, start_segno);
+			raw_sit = page_address(page);
+		}
 
 		if (flushed)
 			goto to_sit_page;
@@ -1600,6 +1661,10 @@ static int build_sit_info(struct f2fs_sb_info *sbi)
 			return -ENOMEM;
 	}
 
+	sit_i->tmp_map = kzalloc(SIT_VBLOCK_MAP_SIZE, GFP_KERNEL);
+	if (!sit_i->tmp_map)
+		return -ENOMEM;
+
 	if (sbi->segs_per_sec > 1) {
 		sit_i->sec_entries = vzalloc(TOTAL_SECS(sbi) *
 					sizeof(struct sec_entry));
@@ -1666,7 +1731,7 @@ static int build_free_segmap(struct f2fs_sb_info *sbi)
 		(unsigned int) GET_SEGNO_FROM_SEG0(sbi, sm_info->main_blkaddr);
 	free_i->free_segments = 0;
 	free_i->free_sections = 0;
-	rwlock_init(&free_i->segmap_lock);
+	spin_lock_init(&free_i->segmap_lock);
 	return 0;
 }
 
@@ -1874,6 +1939,10 @@ int build_segment_manager(struct f2fs_sb_info *sbi)
 	sm_info->nr_discards = 0;
 	sm_info->max_discards = 0;
 
+	sm_info->trim_sections = DEF_BATCHED_TRIM_SECTIONS;
+
+	INIT_LIST_HEAD(&sm_info->sit_entry_set);
+
 	if (test_opt(sbi, FLUSH_MERGE) && !f2fs_readonly(sbi->sb)) {
 		err = create_flush_cmd_control(sbi);
 		if (err)
@@ -1974,6 +2043,8 @@ static void destroy_sit_info(struct f2fs_sb_info *sbi)
 			kfree(sit_i->sentries[start].ckpt_valid_map);
 		}
 	}
+	kfree(sit_i->tmp_map);
+
 	vfree(sit_i->sentries);
 	vfree(sit_i->sec_entries);
 	kfree(sit_i->dirty_sentries_bitmap);

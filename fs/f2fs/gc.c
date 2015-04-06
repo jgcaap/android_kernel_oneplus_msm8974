@@ -46,7 +46,7 @@ static int gc_thread_func(void *data)
 			break;
 
 		if (sbi->sb->s_frozen >= SB_FREEZE_WRITE) {
-			wait_ms = increase_sleep_time(gc_th, wait_ms);
+			increase_sleep_time(gc_th, &wait_ms);
 			continue;
 		}
 
@@ -67,15 +67,15 @@ static int gc_thread_func(void *data)
 			continue;
 
 		if (!is_idle(sbi)) {
-			wait_ms = increase_sleep_time(gc_th, wait_ms);
+			increase_sleep_time(gc_th, &wait_ms);
 			mutex_unlock(&sbi->gc_mutex);
 			continue;
 		}
 
 		if (has_enough_invalid_blocks(sbi))
-			wait_ms = decrease_sleep_time(gc_th, wait_ms);
+			decrease_sleep_time(gc_th, &wait_ms);
 		else
-			wait_ms = increase_sleep_time(gc_th, wait_ms);
+			increase_sleep_time(gc_th, &wait_ms);
 
 		stat_inc_bggc_count(sbi);
 
@@ -362,7 +362,9 @@ static void add_gc_inode(struct inode *inode, struct list_head *ilist)
 
 	new_ie = f2fs_kmem_cache_alloc(winode_slab, GFP_NOFS);
 	new_ie->inode = inode;
-	list_add_tail(&new_ie->list, ilist);
+	f2fs_radix_tree_insert(&gc_list->iroot, inode->i_ino, new_ie);
+	list_add_tail(&new_ie->list, &gc_list->ilist);
+
 }
 
 static void put_gc_inode(struct list_head *ilist)
@@ -432,7 +434,7 @@ next_step:
 				set_page_dirty(node_page);
 		}
 		f2fs_put_page(node_page, 1);
-		stat_inc_node_blk_count(sbi, 1);
+		stat_inc_node_blk_count(sbi, 1, gc_type);
 	}
 
 	if (initial) {
@@ -612,11 +614,10 @@ next_step:
 								F2FS_I(inode));
 				data_page = get_lock_data_page(inode,
 						start_bidx + ofs_in_node);
-				if (IS_ERR(data_page))
-					continue;
-				move_data_page(inode, data_page, gc_type);
-				stat_inc_data_blk_count(sbi, 1);
-			}
+			if (IS_ERR(data_page))
+				continue;
+			move_data_page(inode, data_page, gc_type);
+			stat_inc_data_blk_count(sbi, 1, gc_type);
 		}
 		continue;
 next_iput:
@@ -675,7 +676,7 @@ static void do_garbage_collect(struct f2fs_sb_info *sbi, unsigned int segno,
 	}
 	blk_finish_plug(&plug);
 
-	stat_inc_seg_count(sbi, GET_SUM_TYPE((&sum->footer)));
+	stat_inc_seg_count(sbi, GET_SUM_TYPE((&sum->footer)), gc_type);
 	stat_inc_call_count(sbi->stat_info);
 
 	f2fs_put_page(sum_page, 1);
@@ -688,8 +689,13 @@ int f2fs_gc(struct f2fs_sb_info *sbi)
 	int gc_type = BG_GC;
 	int nfree = 0;
 	int ret = -1;
+	struct cp_control cpc;
+	struct gc_inode_list gc_list = {
+		.ilist = LIST_HEAD_INIT(gc_list.ilist),
+		.iroot = RADIX_TREE_INIT(GFP_NOFS),
+	};
 
-	INIT_LIST_HEAD(&ilist);
+	cpc.reason = __get_cp_reason(sbi);
 gc_more:
 	if (unlikely(!(sbi->sb->s_flags & MS_ACTIVE)))
 		goto stop;
