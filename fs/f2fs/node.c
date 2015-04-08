@@ -35,13 +35,7 @@ bool available_free_memory(struct f2fs_sb_info *sbi, int type)
 	bool res = false;
 
 	si_meminfo(&val);
-
-	/* only uses low memory */
-	avail_ram = val.totalram - val.totalhigh;
-
-	/*
-	 * give 25%, 25%, 50%, 50%, 50% memory for each components respectively
-	 */
+	/* give 25%, 25%, 50% memory for each components respectively */
 	if (type == FREE_NIDS) {
 		mem_size = (nm_i->fcnt * sizeof(struct free_nid)) >> 12;
 		res = mem_size < ((val.totalram * nm_i->ram_thresh / 100) >> 2);
@@ -52,22 +46,7 @@ bool available_free_memory(struct f2fs_sb_info *sbi, int type)
 		if (sbi->sb->s_bdi->dirty_exceeded)
 			return false;
 		mem_size = get_pages(sbi, F2FS_DIRTY_DENTS);
-		res = mem_size < ((avail_ram * nm_i->ram_thresh / 100) >> 1);
-	} else if (type == INO_ENTRIES) {
-		int i;
-
-		for (i = 0; i <= UPDATE_INO; i++)
-			mem_size += (sbi->im[i].ino_num *
-				sizeof(struct ino_entry)) >> PAGE_CACHE_SHIFT;
-		res = mem_size < ((avail_ram * nm_i->ram_thresh / 100) >> 1);
-	} else if (type == EXTENT_CACHE) {
-		mem_size = (sbi->total_ext_tree * sizeof(struct extent_tree) +
-				atomic_read(&sbi->total_ext_node) *
-				sizeof(struct extent_node)) >> PAGE_CACHE_SHIFT;
-		res = mem_size < ((avail_ram * nm_i->ram_thresh / 100) >> 1);
-	} else {
-		if (sbi->sb->s_bdi->dirty_exceeded)
-			return false;
+		res = mem_size < ((val.totalram * nm_i->ram_thresh / 100) >> 1);
 	}
 	return res;
 }
@@ -434,7 +413,7 @@ int get_dnode_of_data(struct dnode_of_data *dn, pgoff_t index, int mode)
 {
 	struct f2fs_sb_info *sbi = F2FS_SB(dn->inode->i_sb);
 	struct page *npage[4];
-	struct page *parent = NULL;
+	struct page *parent;
 	int offset[4];
 	unsigned int noffset[4];
 	nid_t nids[4];
@@ -451,14 +430,6 @@ int get_dnode_of_data(struct dnode_of_data *dn, pgoff_t index, int mode)
 		if (IS_ERR(npage[0]))
 			return PTR_ERR(npage[0]);
 	}
-
-	/* if inline_data is set, should not report any block indices */
-	if (f2fs_has_inline_data(dn->inode) && index) {
-		err = -ENOENT;
-		f2fs_put_page(npage[0], 1);
-		goto release_out;
-	}
-
 	parent = npage[0];
 	if (level != 0)
 		nids[1] = get_nid(parent, offset[0], true);
@@ -556,7 +527,7 @@ static void truncate_node(struct dnode_of_data *dn)
 	}
 invalidate:
 	clear_node_page_dirty(dn->node_page);
-	set_sbi_flag(sbi, SBI_IS_DIRTY);
+	F2FS_SET_SB_DIRT(sbi);
 
 	f2fs_put_page(dn->node_page, 1);
 
@@ -953,7 +924,6 @@ static int read_node_page(struct page *page, int rw)
 	get_node_info(sbi, page->index, &ni);
 
 	if (unlikely(ni.blk_addr == NULL_ADDR)) {
-		ClearPageUptodate(page);
 		f2fs_put_page(page, 1);
 		return -ENOENT;
 	}
@@ -1002,11 +972,11 @@ repeat:
 	err = read_node_page(page, READ_SYNC);
 	if (err < 0)
 		return ERR_PTR(err);
-	else if (err != LOCKED_PAGE)
-		lock_page(page);
+	else if (err == LOCKED_PAGE)
+		goto got_it;
 
+	lock_page(page);
 	if (unlikely(!PageUptodate(page) || nid != nid_of_node(page))) {
-		ClearPageUptodate(page);
 		f2fs_put_page(page, 1);
 		return ERR_PTR(-EIO);
 	}
@@ -1014,7 +984,7 @@ repeat:
 		f2fs_put_page(page, 1);
 		goto repeat;
 	}
-	mark_page_accessed(page);
+got_it:
 	return page;
 }
 
@@ -1247,7 +1217,7 @@ static int f2fs_write_node_page(struct page *page,
 
 	trace_f2fs_writepage(page, NODE);
 
-	if (unlikely(is_sbi_flag_set(sbi, SBI_POR_DOING)))
+	if (unlikely(sbi->por_doing))
 		goto redirty_out;
 	if (unlikely(f2fs_cp_error(sbi)))
 		goto redirty_out;
@@ -1262,7 +1232,6 @@ static int f2fs_write_node_page(struct page *page,
 
 	/* This page is already truncated */
 	if (unlikely(ni.blk_addr == NULL_ADDR)) {
-		ClearPageUptodate(page);
 		dec_page_count(sbi, F2FS_DIRTY_NODES);
 		unlock_page(page);
 		return 0;
@@ -1328,6 +1297,20 @@ static int f2fs_set_node_page_dirty(struct page *page)
 	return 0;
 }
 
+static void f2fs_invalidate_node_page(struct page *page, unsigned long offset)
+{
+	struct inode *inode = page->mapping->host;
+	struct f2fs_sb_info *sbi = F2FS_SB(inode->i_sb);
+	if (PageDirty(page))
+		dec_page_count(sbi, F2FS_DIRTY_NODES);
+	ClearPagePrivate(page);
+}
+
+static int f2fs_release_node_page(struct page *page, gfp_t wait)
+{
+	ClearPagePrivate(page);
+	return 1;
+}
 
 /*
  * Structure of the f2fs node operations
@@ -1336,8 +1319,8 @@ const struct address_space_operations f2fs_node_aops = {
 	.writepage	= f2fs_write_node_page,
 	.writepages	= f2fs_write_node_pages,
 	.set_page_dirty	= f2fs_set_node_page_dirty,
-	.invalidatepage	= f2fs_invalidate_page,
-	.releasepage	= f2fs_release_page,
+	.invalidatepage	= f2fs_invalidate_node_page,
+	.releasepage	= f2fs_release_node_page,
 };
 
 static struct free_nid *__lookup_free_nid_list(struct f2fs_nm_info *nm_i,
