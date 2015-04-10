@@ -45,17 +45,17 @@
 
 #define LOW_WATERMARK		2
 #define HIGH_WATERMARK		4
-#define DEFAULT_POLLING_MIN_SLEEP (950)
+#define DEFAULT_POLLING_MIN_SLEEP (1000)
 #define MAX_POLLING_SLEEP (6050)
 #define MIN_POLLING_SLEEP (950)
 
 static int msm_bam_dmux_debug_enable;
 module_param_named(debug_enable, msm_bam_dmux_debug_enable,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
-static int POLLING_MIN_SLEEP = 2950;
+static int POLLING_MIN_SLEEP = 4950;
 module_param_named(min_sleep, POLLING_MIN_SLEEP,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
-static int POLLING_MAX_SLEEP = 3050;
+static int POLLING_MAX_SLEEP = 5000;
 module_param_named(max_sleep, POLLING_MAX_SLEEP,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 static int POLLING_INACTIVITY = 1;
@@ -491,6 +491,8 @@ static void bam_mux_process_data(struct sk_buff *rx_skb)
 	unsigned long flags;
 	struct bam_mux_hdr *rx_hdr;
 	unsigned long event_data;
+	void (*notify)(void *, int, unsigned long);
+	void *priv;
 
 	rx_hdr = (struct bam_mux_hdr *)rx_skb->data;
 
@@ -500,15 +502,19 @@ static void bam_mux_process_data(struct sk_buff *rx_skb)
 	rx_skb->truesize = rx_hdr->pkt_len + sizeof(struct sk_buff);
 
 	event_data = (unsigned long)(rx_skb);
+	notify = NULL;
+	priv = NULL;
 
 	spin_lock_irqsave(&bam_ch[rx_hdr->ch_id].lock, flags);
-	if (bam_ch[rx_hdr->ch_id].notify)
-		bam_ch[rx_hdr->ch_id].notify(
-			bam_ch[rx_hdr->ch_id].priv, BAM_DMUX_RECEIVE,
-							event_data);
+	if (bam_ch[rx_hdr->ch_id].notify) {
+		notify = bam_ch[rx_hdr->ch_id].notify;
+		priv = bam_ch[rx_hdr->ch_id].priv;
+	}
+	spin_unlock_irqrestore(&bam_ch[rx_hdr->ch_id].lock, flags);
+	if (notify)
+		notify(priv, BAM_DMUX_RECEIVE, event_data);
 	else
 		dev_kfree_skb_any(rx_skb);
-	spin_unlock_irqrestore(&bam_ch[rx_hdr->ch_id].lock, flags);
 
 	queue_rx();
 }
@@ -1662,8 +1668,10 @@ static int ssrestart_check(void)
 								__func__);
 	in_global_reset = 1;
 	ret = subsystem_restart("modem");
-	if (ret == -ENODEV)
-		panic("modem subsystem restart failed\n");
+	if (ret == -ENODEV) {
+		DMUX_LOG_KERR("%s: modem subsystem restart failed\n", __func__);
+		dump_stack();
+	}
 	return 1;
 }
 
