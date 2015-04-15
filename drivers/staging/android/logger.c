@@ -26,21 +26,8 @@
 #include <linux/slab.h>
 #include <linux/time.h>
 #include "logger.h"
-#include "logger_interface.h"
-
 #include <asm/ioctls.h>
-#ifdef CONFIG_SEC_DEBUG
-#include <mach/sec_debug.h>
-static char klog_buf[256];
-#endif
 
-#ifdef CONFIG_SEC_BSP
-#include <mach/sec_bsp.h>
-#endif
-
-#ifndef CONFIG_LOGCAT_SIZE
-#define CONFIG_LOGCAT_SIZE 256
-#endif
 
 /*
  * struct logger_log - represents a specific log, such as 'main' or 'radio'
@@ -409,12 +396,6 @@ static void do_write_log(struct logger_log *log, const void *buf, size_t count)
 {
 	size_t len;
 
-	// if logger mode is disabled, terminate instantly
-	if (logger_mode == 0)
-	{
-			return;
-	} 
-        
 	len = min(count, log->size - log->w_off);
 	memcpy(log->buffer + log->w_off, buf, len);
 
@@ -438,12 +419,6 @@ static ssize_t do_write_log_from_user(struct logger_log *log,
 {
 	size_t len;
 
-	// if logger mode is disabled, terminate instantly
-	if (logger_mode == 0)
-	{
-			return 0;
-	} 
-
 	len = min(count, log->size - log->w_off);
 	if (len && copy_from_user(log->buffer + log->w_off, buf, len))
 		return -EFAULT;
@@ -457,20 +432,6 @@ static ssize_t do_write_log_from_user(struct logger_log *log,
 			 * message corruption from missing fragments.
 			 */
 			return -EFAULT;
-#ifdef CONFIG_SEC_DEBUG
-	memset(klog_buf, 0, 255);
-	if (strncmp(log->buffer + log->w_off, "!@", 2) == 0) {
-		if (count < 255)
-			memcpy(klog_buf, log->buffer + log->w_off, count);
-		else
-			memcpy(klog_buf, log->buffer + log->w_off, 255);
-		klog_buf[255] = 0;
-#ifdef CONFIG_SEC_BSP
-		if (strncmp(klog_buf, "!@Boot", 6) == 0)
-			sec_boot_stat_add(klog_buf);
-#endif
-	}
-#endif
 
 	log->w_off = logger_offset(log, log->w_off + count);
 
@@ -540,11 +501,6 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 
 	/* wake up any blocked readers */
 	wake_up_interruptible(&log->wq);
-
-#ifdef CONFIG_SEC_DEBUG
-	if (strncmp(klog_buf, "!@", 2) == 0)
-		printk(KERN_INFO "%s\n", klog_buf);
-#endif
 
 	return ret;
 }
@@ -772,14 +728,11 @@ static struct logger_log VAR = { \
 	.size = SIZE, \
 };
 
-#ifdef CONFIG_SEC_LOGGER_BUFFER_EXPANSION
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, CONFIG_LOGCAT_SIZE*1024*2*CONFIG_SEC_LOGGER_BUFFER_EXPANSION_SIZE) // 2MB
-#else
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, CONFIG_LOGCAT_SIZE*1024*2)	// 1MB
-#endif
-DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, CONFIG_LOGCAT_SIZE*1024)	// 512KB
-DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, CONFIG_LOGCAT_SIZE*1024*4)	// 2MB
-DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, CONFIG_LOGCAT_SIZE*1024)	// 512KB
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 256*1024)
+DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, 256*1024)
+DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 256*1024)
+DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, 256*1024)
+
 
 static struct logger_log *get_log_from_minor(int minor)
 {
@@ -810,37 +763,7 @@ static int __init init_log(struct logger_log *log)
 
 	return 0;
 }
-#if (defined CONFIG_SEC_DEBUG && defined CONFIG_SEC_DEBUG_SUBSYS)
-int sec_debug_subsys_set_logger_info(
-	struct sec_debug_subsys_logger_log_info *log_info)
-{
-	/*
-	struct secdbg_logger_log_info log_info = {
-		.stinfo = {
-			.buffer_offset = offsetof(struct logger_log, buffer),
-			.w_off_offset = offsetof(struct logger_log, w_off),
-			.head_offset = offsetof(struct logger_log, head),
-			.size_offset = offsetof(struct logger_log, size),
-			.size_t_typesize = sizeof(size_t),
-		},
-	};
-	*/
-	log_info->stinfo.buffer_offset = offsetof(struct logger_log, buffer);
-	log_info->stinfo.w_off_offset = offsetof(struct logger_log, w_off);
-	log_info->stinfo.head_offset = offsetof(struct logger_log, head);
-	log_info->stinfo.size_offset = offsetof(struct logger_log, size);
-	log_info->stinfo.size_t_typesize = sizeof(size_t);
-	log_info->main.log_paddr = __pa(&log_main);
-	log_info->main.buffer_paddr = __pa(_buf_log_main);
-	log_info->system.log_paddr = __pa(&log_system);
-	log_info->system.buffer_paddr = __pa(_buf_log_system);
-	log_info->events.log_paddr = __pa(&log_events);
-	log_info->events.buffer_paddr = __pa(_buf_log_events);
-	log_info->radio.log_paddr = __pa(&log_radio);
-	log_info->radio.buffer_paddr = __pa(_buf_log_radio);
-	return 0;
-}
-#endif
+
 
 static int __init logger_init(void)
 {
@@ -861,10 +784,6 @@ static int __init logger_init(void)
 	ret = init_log(&log_system);
 	if (unlikely(ret))
 		goto out;
-#ifdef CONFIG_SEC_DEBUG
-	sec_getlog_supply_loggerinfo(_buf_log_main, _buf_log_radio,
-				     _buf_log_events, _buf_log_system);
-#endif
 
 out:
 	return ret;
