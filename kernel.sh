@@ -26,7 +26,6 @@ export ARCH=arm
 export SUBARCH=arm
 export KBUILD_BUILD_USER=jgcaap
 export KBUILD_BUILD_HOST=kernel
-export CCACHE=ccache
 
 # Paths
 KERNEL_DIR=`pwd`
