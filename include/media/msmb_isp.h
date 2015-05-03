@@ -456,4 +456,3 @@ struct msm_isp_event_data {
 	_IOWR('V', BASE_VIDIOC_PRIVATE+15, struct msm_vfe_smmu_attach_cmd)
 
 #endif /* __MSMB_ISP__ */
-

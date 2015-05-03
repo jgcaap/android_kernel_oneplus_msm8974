@@ -52,6 +52,12 @@
 
 #define MAX_AF_ITERATIONS 3
 #define MAX_NUMBER_OF_STEPS 47
+#define MAX_POWER_CONFIG 12
+
+typedef enum sensor_stats_type {
+	YRGB,
+	YYYY,
+} sensor_stats_type_t;
 
 enum flash_type {
 	LED_FLASH = 1,
@@ -623,4 +629,3 @@ struct msm_camera_led_cfg_t {
 #define MSM_V4L2_PIX_FMT_META v4l2_fourcc('M', 'E', 'T', 'A') /* META */
 
 #endif /* __LINUX_MSM_CAM_SENSOR_H */
-
