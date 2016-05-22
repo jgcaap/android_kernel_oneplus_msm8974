@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,9 +15,10 @@
 
 #include <linux/leds.h>
 #include <linux/platform_device.h>
+#include <linux/ratelimit.h>
 #include <media/v4l2-subdev.h>
 #include <media/msm_cam_sensor.h>
-#include <soc/qcom/camera2.h>
+#include <mach/camera2.h>
 #include "msm_camera_i2c.h"
 #include "msm_sd.h"
 

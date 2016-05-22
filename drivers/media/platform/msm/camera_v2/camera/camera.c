@@ -71,7 +71,6 @@ static int camera_check_event_status(struct v4l2_event *event)
 				__func__, __LINE__, event_data->status);
 		return -EFAULT;
 	}
-
 	return 0;
 }
 
@@ -95,7 +94,7 @@ static int camera_v4l2_querycap(struct file *filep, void *fh,
 }
 
 static int camera_v4l2_s_crop(struct file *filep, void *fh,
-	const struct v4l2_crop *crop)
+	struct v4l2_crop *crop)
 {
 	int rc = 0;
 	struct v4l2_event event;
@@ -346,20 +345,17 @@ static int camera_v4l2_s_fmt_vid_cap_mplane(struct file *filep, void *fh,
 
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
 		if (rc < 0)
-			goto set_fmt_fail;
+			return rc;
 
 		rc = camera_check_event_status(&event);
 		if (rc < 0)
-			goto set_fmt_fail;
+			return rc;
+
 		sp->is_vb2_valid = 1;
 	}
 
 	return rc;
 
-set_fmt_fail:
-	kzfree(sp->vb2_q.drv_priv);
-	sp->vb2_q.drv_priv = NULL;
-	return rc;
 }
 
 static int camera_v4l2_try_fmt_vid_cap_mplane(struct file *filep, void *fh,
@@ -413,18 +409,18 @@ error:
 }
 
 static int camera_v4l2_subscribe_event(struct v4l2_fh *fh,
-	const struct v4l2_event_subscription *sub)
+	struct v4l2_event_subscription *sub)
 {
 	int rc = 0;
 	struct camera_v4l2_private *sp = fh_to_private(fh);
 
-	rc = v4l2_event_subscribe(&sp->fh, sub, 5, NULL);
+	rc = v4l2_event_subscribe(&sp->fh, sub, 5);
 
 	return rc;
 }
 
 static int camera_v4l2_unsubscribe_event(struct v4l2_fh *fh,
-	const struct v4l2_event_subscription *sub)
+	struct v4l2_event_subscription *sub)
 {
 	int rc = 0;
 	struct camera_v4l2_private *sp = fh_to_private(fh);
@@ -466,11 +462,11 @@ static int camera_v4l2_fh_open(struct file *filep)
 	struct camera_v4l2_private *sp;
 
 	sp = kzalloc(sizeof(*sp), GFP_KERNEL);
+
 	if (!sp) {
 		pr_err("%s : memory not available\n", __func__);
 		return -ENOMEM;
 	}
-
 	filep->private_data = &sp->fh;
 
 	/* stream_id = open id */
@@ -509,7 +505,6 @@ static int camera_v4l2_vb2_q_init(struct file *filep)
 		pr_err("%s : memory not available\n", __func__);
 		return -ENOMEM;
 	}
-
 	q->mem_ops = msm_vb2_get_q_mem_ops();
 	q->ops = msm_vb2_get_q_ops();
 
@@ -518,8 +513,9 @@ static int camera_v4l2_vb2_q_init(struct file *filep)
 	q->io_modes = VB2_USERPTR;
 	q->io_flags = 0;
 	q->buf_struct_size = sizeof(struct msm_vb2_buffer);
-//	q->timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	return vb2_queue_init(q);
+	vb2_queue_init(q);
+
+	return 0;
 }
 
 static void camera_v4l2_vb2_q_release(struct file *filep)
@@ -538,20 +534,20 @@ static int camera_v4l2_open(struct file *filep)
 	BUG_ON(!pvdev);
 
 	rc = camera_v4l2_fh_open(filep);
+
 	if (rc < 0) {
 		pr_err("%s : camera_v4l2_fh_open failed Line %d rc %d\n",
 				__func__, __LINE__, rc);
 		goto fh_open_fail;
 	}
-
 	/* every stream has a vb2 queue */
 	rc = camera_v4l2_vb2_q_init(filep);
+
 	if (rc < 0) {
 		pr_err("%s : vb2 queue init fails Line %d rc %d\n",
 				__func__, __LINE__, rc);
 		goto vb2_q_fail;
 	}
-
 	if (!atomic_read(&pvdev->opened)) {
 		pm_stay_awake(&pvdev->vdev->dev);
 
@@ -562,15 +558,14 @@ static int camera_v4l2_open(struct file *filep)
 					__func__, __LINE__, rc);
 			goto session_fail;
 		}
-
 		rc = msm_create_command_ack_q(pvdev->vdev->num, 0);
+
 		if (rc < 0) {
 			pr_err("%s : creation of command_ack queue failed\n",
 					__func__);
 			pr_err("%s : Line %d rc %d\n", __func__, __LINE__, rc);
 			goto command_ack_q_fail;
 		}
-
 		camera_pack_event(filep, MSM_CAMERA_NEW_SESSION, 0, -1, &event);
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
 		if (rc < 0) {
@@ -579,7 +574,6 @@ static int camera_v4l2_open(struct file *filep)
 			pr_err("%s : Line %d rc %d\n", __func__, __LINE__, rc);
 			goto post_fail;
 		}
-
 		rc = camera_check_event_status(&event);
 		if (rc < 0) {
 			pr_err("%s : checking event status fails Line %d rc %d\n",
@@ -676,12 +670,22 @@ static int camera_v4l2_close(struct file *filep)
 	return rc;
 }
 
+#ifdef CONFIG_COMPAT
+long camera_v4l2_compat_ioctl(struct file *file, unsigned int cmd,
+	unsigned long arg)
+{
+	return -ENOIOCTLCMD;
+}
+#endif
 static struct v4l2_file_operations camera_v4l2_fops = {
 	.owner   = THIS_MODULE,
 	.open	= camera_v4l2_open,
 	.poll	= camera_v4l2_poll,
 	.release = camera_v4l2_close,
 	.ioctl   = video_ioctl2,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl32 = camera_v4l2_compat_ioctl,
+#endif
 };
 
 int camera_init_v4l2(struct device *dev, unsigned int *session)

@@ -28,18 +28,13 @@
 #include "msm_isp_axi_util.h"
 #include "msm_isp_stats_util.h"
 #include "msm_sd.h"
-// #include "msm_isp44.h"
 #include "msm_isp40.h"
 #include "msm_isp32.h"
 
 static struct msm_sd_req_vb2_q vfe_vb2_ops;
 
 static const struct of_device_id msm_vfe_dt_match[] = {
-/*	{
-		.compatible = "qcom,vfe44",
-		.data = &vfe44_hw_info,
-	},
-*/	{
+	{
 		.compatible = "qcom,vfe40",
 		.data = &vfe40_hw_info,
 	},
@@ -133,7 +128,7 @@ static int msm_isp_enable_debugfs(struct msm_isp_statistics *stats)
 		return -ENOMEM;
 	return 0;
 }
-static int vfe_probe(struct platform_device *pdev)
+static int __devinit vfe_probe(struct platform_device *pdev)
 {
 	struct vfe_device *vfe_dev;
 	/*struct msm_cam_subdev_info sd_info;*/
@@ -220,6 +215,7 @@ static int vfe_probe(struct platform_device *pdev)
 		&vfe_vb2_ops, &vfe_layout);
 	if (rc < 0) {
 		pr_err("%s: Unable to create buffer manager\n", __func__);
+		msm_sd_unregister(&vfe_dev->subdev);
 		kfree(vfe_dev);
 		return -EINVAL;
 	}

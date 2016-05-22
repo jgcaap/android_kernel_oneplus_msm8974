@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,7 +20,6 @@
 #include <linux/spinlock.h>
 #include <linux/proc_fs.h>
 #include <linux/atomic.h>
-#include <linux/wait.h>
 #include <linux/videodev2.h>
 #include <linux/msm_ion.h>
 #include <linux/iommu.h>
@@ -244,7 +243,10 @@ void msm_delete_stream(unsigned int session_id, unsigned int stream_id)
 	spin_lock_irqsave(&(session->stream_q.lock), flags);
 	list_del_init(&stream->list);
 	session->stream_q.len--;
+	kfree(stream);
+	stream = NULL;
 	spin_unlock_irqrestore(&(session->stream_q.lock), flags);
+
 }
 
 static void msm_sd_unregister_subdev(struct video_device *vdev)
@@ -402,7 +404,7 @@ int msm_create_command_ack_q(unsigned int session_id, unsigned int stream_id)
 
 	msm_init_queue(&cmd_ack->command_q);
 	INIT_LIST_HEAD(&cmd_ack->list);
-	init_waitqueue_head(&cmd_ack->wait);
+	init_completion(&cmd_ack->wait_complete);
 	cmd_ack->stream_id = stream_id;
 
 	msm_enqueue(&session->command_ack_q, &cmd_ack->list);
@@ -457,8 +459,12 @@ static inline int __msm_sd_close_subdevs(struct msm_sd_subdev *msm_sd,
 static inline int __msm_destroy_session_streams(void *d1, void *d2)
 {
 	struct msm_stream *stream = d1;
-	pr_err("%s: Error: Destroyed list is not empty\n", __func__);
+	unsigned long flags;
+
+	pr_err("%s: Destroyed here due to list is not empty\n", __func__);
+	spin_lock_irqsave(&stream->stream_lock, flags);
 	INIT_LIST_HEAD(&stream->queued_list);
+	spin_unlock_irqrestore(&stream->stream_lock, flags);
 	return 0;
 }
 
@@ -522,9 +528,8 @@ int msm_destroy_session(unsigned int session_id)
 	if (buf_mgr_subdev) {
 		v4l2_subdev_call(buf_mgr_subdev, core, ioctl,
 			MSM_SD_SHUTDOWN, NULL);
-	} else {
+	} else
 		pr_err("%s: Buff manger device node is NULL\n", __func__);
-	}
 
 	return 0;
 }
@@ -546,7 +551,7 @@ static int __msm_close_destry_session_notify_apps(void *d1, void *d2)
 }
 
 static long msm_private_ioctl(struct file *file, void *fh,
-	bool valid_prio, unsigned int cmd, void *arg)
+	bool valid_prio, int cmd, void *arg)
 {
 	int rc = 0;
 	struct msm_v4l2_event_data *event_data;
@@ -603,7 +608,7 @@ static long msm_private_ioctl(struct file *file, void *fh,
 		   spin_flags);
 		ret_cmd->event = *(struct v4l2_event *)arg;
 		msm_enqueue(&cmd_ack->command_q, &ret_cmd->list);
-		wake_up(&cmd_ack->wait);
+		complete(&cmd_ack->wait_complete);
 		spin_unlock_irqrestore(&(session->command_ack_q.lock),
 		   spin_flags);
 	}
@@ -625,7 +630,7 @@ static long msm_private_ioctl(struct file *file, void *fh,
 }
 
 static int msm_unsubscribe_event(struct v4l2_fh *fh,
-	const struct v4l2_event_subscription *sub)
+	struct v4l2_event_subscription *sub)
 {
 	int rc = v4l2_event_unsubscribe(fh, sub);
 	if (rc == 0)
@@ -634,7 +639,7 @@ static int msm_unsubscribe_event(struct v4l2_fh *fh,
 }
 
 static int msm_subscribe_event(struct v4l2_fh *fh,
-	const struct v4l2_event_subscription *sub)
+	struct v4l2_event_subscription *sub)
 {
 	int rc = v4l2_event_subscribe(fh, sub, 5);
 	if (rc == 0)
@@ -729,6 +734,9 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 		return -EIO;
 	}
 
+	/*re-init wait_complete */
+	INIT_COMPLETION(cmd_ack->wait_complete);
+
 	v4l2_event_queue(vdev, event);
 
 	if (timeout < 0) {
@@ -752,12 +760,7 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 					__func__);
 			msm_print_event_error(event);
 			mutex_unlock(&session->lock);
-			return -ETIMEDOUT;
-		}
-		if (rc < 0) {
-			pr_err("%s: rc = %d\n", __func__, rc);
-			mutex_unlock(&session->lock);
-			return rc;
+			return -EINVAL;
 		}
 	}
 
@@ -783,7 +786,6 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 				cmd->event.type, cmd->event.id);
 		rc = -EINVAL;
 	}
-
 	*event = cmd->event;
 
 	kzfree(cmd);
@@ -995,7 +997,7 @@ static void msm_sd_notify(struct v4l2_subdev *sd,
 	}
 }
 
-static int msm_probe(struct platform_device *pdev)
+static int __devinit msm_probe(struct platform_device *pdev)
 {
 	struct msm_video_device *pvdev;
 	int rc = 0;
@@ -1072,8 +1074,10 @@ static int msm_probe(struct platform_device *pdev)
 	video_set_drvdata(pvdev->vdev, pvdev);
 
 	msm_session_q = kzalloc(sizeof(*msm_session_q), GFP_KERNEL);
-	if (WARN_ON(!msm_session_q))
-		goto v4l2_fail;
+	if (WARN_ON(!msm_session_q)) {
+		rc = -ENOMEM;
+		goto session_fail;
+	}
 
 	msm_init_queue(msm_session_q);
 	spin_lock_init(&msm_eventq_lock);
@@ -1081,6 +1085,8 @@ static int msm_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&ordered_sd_list);
 	goto probe_end;
 
+session_fail:
+	video_unregister_device(pvdev->vdev);
 v4l2_fail:
 	v4l2_device_unregister(pvdev->vdev->v4l2_dev);
 register_fail:

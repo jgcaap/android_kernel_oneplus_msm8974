@@ -18,7 +18,7 @@
 #include <linux/platform_device.h>
 #include <media/v4l2-subdev.h>
 #include <media/msm_cam_sensor.h>
-#include <soc/qcom/camera2.h>
+#include <mach/camera2.h>
 #include "msm_sd.h"
 /*Added by Jinshui.Liu@Camera 20140221 start for cci error*/
 #ifdef CONFIG_MACH_OPPO
@@ -189,4 +189,3 @@ struct v4l2_subdev *msm_cci_get_subdev(void);
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 23, struct msm_camera_cci_ctrl *)
 
 #endif
-

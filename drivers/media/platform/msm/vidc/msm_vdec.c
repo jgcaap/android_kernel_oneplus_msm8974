@@ -12,10 +12,11 @@
  */
 
 #include <linux/slab.h>
-#include <soc/qcom/scm.h>
+#include <mach/scm.h>
 #include "msm_vidc_internal.h"
 #include "msm_vidc_common.h"
 #include "vidc_hfi_api.h"
+#include "msm_smem.h"
 #include "msm_vidc_debug.h"
 
 #define MSM_VDEC_DVC_NAME "msm_vdec_8974"
@@ -194,7 +195,6 @@ static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
 		.minimum = V4L2_MPEG_VIDC_VIDEO_SYNC_FRAME_DECODE_DISABLE,
 		.maximum = V4L2_MPEG_VIDC_VIDEO_SYNC_FRAME_DECODE_ENABLE,
 		.default_value = V4L2_MPEG_VIDC_VIDEO_SYNC_FRAME_DECODE_DISABLE,
-		.step = 1,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_SECURE,
@@ -228,9 +228,9 @@ static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_MULTISLICE_INFO) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_NUM_CONCEALED_MB) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_METADATA_FILLER) |
-			(1 << V4L2_MPEG_VIDC_EXTRADATA_INPUT_CROP) |
-			(1 << V4L2_MPEG_VIDC_EXTRADATA_DIGITAL_ZOOM) |
-			(1 << V4L2_MPEG_VIDC_EXTRADATA_ASPECT_RATIO) |
+			(1 << V4L2_MPEG_VIDC_INDEX_EXTRADATA_INPUT_CROP) |
+			(1 << V4L2_MPEG_VIDC_INDEX_EXTRADATA_DIGITAL_ZOOM) |
+			(1 << V4L2_MPEG_VIDC_INDEX_EXTRADATA_ASPECT_RATIO) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_MPEG2_SEQDISP) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_FRAME_QP) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_FRAME_BITS_INFO) |
@@ -303,6 +303,7 @@ static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
 			V4L2_CID_MPEG_VIDC_VIDEO_STREAM_OUTPUT_SECONDARY,
 		.default_value =
 			V4L2_CID_MPEG_VIDC_VIDEO_STREAM_OUTPUT_PRIMARY,
+		.step = 1,
 		.menu_skip_mask = 0,
 		.step = 1,
 		.qmenu = NULL,
@@ -1656,7 +1657,6 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 			break;
 		}
 
-		msm_comm_scale_clocks_and_bus(inst);
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_ALLOC_MODE_INPUT:
 		if (ctrl->val == V4L2_MPEG_VIDC_VIDEO_DYNAMIC) {
@@ -1941,17 +1941,14 @@ int msm_vdec_ctrl_init(struct msm_vidc_inst *inst)
 			}
 		}
 
-		ret_val = inst->ctrl_handler.error;
-		if (ret_val) {
-			dprintk(VIDC_ERR,
-					"Error adding ctrl (%s) to ctrl handle, %d\n",
-					msm_vdec_ctrls[idx].name,
-					inst->ctrl_handler.error);
-			return ret_val;
-		}
 
 		inst->ctrls[idx] = ctrl;
 	}
+	ret_val = inst->ctrl_handler.error;
+	if (ret_val)
+		dprintk(VIDC_ERR,
+			"Error adding ctrls to ctrl handle, %d\n",
+			inst->ctrl_handler.error);
 
 	/* Construct a super cluster of all controls */
 	inst->cluster = get_super_cluster(inst, &cluster_size);
@@ -1979,4 +1976,3 @@ int msm_vdec_ctrl_deinit(struct msm_vidc_inst *inst)
 
 	return 0;
 }
-

@@ -17,7 +17,6 @@
 #include <linux/of.h>
 #include <linux/of_gpio.h>
 #include <linux/of_platform.h>
-#include <linux/wakelock.h>
 #include <media/msm_isp.h>
 #include "msm_sd.h"
 #include "msm_cci.h"
@@ -494,11 +493,6 @@ static int32_t msm_cci_i2c_read_bytes(struct v4l2_subdev *sd,
 	cci_dev = v4l2_get_subdevdata(sd);
 	if (!cci_dev) {
 		pr_err("%s:%d cci_dev NULL\n", __func__, __LINE__);
-		return -EINVAL;
-	}
-	if (cci_dev->cci_state != CCI_STATE_ENABLED) {
-		pr_err("%s invalid cci state %d\n",
-			__func__, cci_dev->cci_state);
 		return -EINVAL;
 	}
 
@@ -1182,7 +1176,7 @@ struct v4l2_subdev *msm_cci_get_subdev(void)
 	return g_cci_subdev;
 }
 
-static int msm_cci_probe(struct platform_device *pdev)
+static int __devinit msm_cci_probe(struct platform_device *pdev)
 {
 	struct cci_device *new_cci_dev;
 	int rc = 0;
@@ -1316,4 +1310,3 @@ module_init(msm_cci_init_module);
 module_exit(msm_cci_exit_module);
 MODULE_DESCRIPTION("MSM CCI driver");
 MODULE_LICENSE("GPL v2");
-

@@ -21,9 +21,9 @@
 #include <mach/iommu.h>
 #include <mach/iommu_domains.h>
 #include <mach/ocmem.h>
-#include <soc/qcom/scm.h>
-#include <soc/qcom/subsystem_restart.h>
-#include <soc/qcom/smem.h>
+#include <mach/scm.h>
+#include <mach/subsystem_restart.h>
+#include <mach/msm_smem.h>
 #include <asm/memory.h>
 #include <linux/iopoll.h>
 #include "hfi_packetization.h"
@@ -3811,7 +3811,7 @@ static int venus_hfi_get_fw_info(void *dev, struct hal_fw_info *fw_info)
 		return -EINVAL;
 	}
 	smem_table_ptr = smem_get_entry(SMEM_IMAGE_VERSION_TABLE,
-			&smem_block_size, 0, SMEM_ANY_HOST_FLAG);
+			&smem_block_size);
 	if (smem_table_ptr &&
 			((smem_image_index_venus +
 			  version_string_size) <= smem_block_size))

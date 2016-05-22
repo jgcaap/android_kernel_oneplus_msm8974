@@ -161,6 +161,13 @@ struct msm_cpp_work_t {
 	struct cpp_device *cpp_dev;
 };
 
+struct msm_cpp_clock_settings_t {
+	long clock_rate;
+	uint64_t avg;
+	uint64_t inst;
+};
+
+
 struct cpp_device {
 	struct platform_device *pdev;
 	struct msm_sd_subdev msm_sd;
@@ -191,7 +198,6 @@ struct cpp_device {
 	struct device *iommu_ctx;
 	struct ion_client *client;
 	struct kref refcount;
-	uint32_t num_clk;
 
 	/* Reusing proven tasklet from msm isp */
 	atomic_t irq_cnt;

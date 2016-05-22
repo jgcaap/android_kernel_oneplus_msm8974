@@ -14,7 +14,7 @@
 #include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/interrupt.h>
-#include <soc/qcom/smem.h>
+#include <mach/msm_smem.h>
 #include "vidc_hfi_helper.h"
 #include "vidc_hfi_io.h"
 #include "msm_vidc_debug.h"
@@ -1257,7 +1257,7 @@ static void hfi_process_sys_get_prop_image_version(
 	dprintk(VIDC_DBG, "F/W version: %s\n", version);
 
 	smem_table_ptr = smem_get_entry(SMEM_IMAGE_VERSION_TABLE,
-			&smem_block_size, 0, SMEM_ANY_HOST_FLAG);
+			&smem_block_size);
 	if (smem_table_ptr &&
 			((smem_image_index_venus +
 				version_string_size) <= smem_block_size))
@@ -1303,7 +1303,7 @@ u32 hfi_process_msg_packet(
 	u32 rc = 0;
 	struct hal_session *sess = NULL;
 	if (!callback || !session_lock || !msg_hdr ||
-			msg_hdr->size < VIDC_IFACEQ_MIN_PKT_SIZE) {
+			msg_hdr->size <	VIDC_IFACEQ_MIN_PKT_SIZE) {
 		dprintk(VIDC_ERR, "hal_process_msg_packet:bad"
 			"packet/packet size: %d", msg_hdr->size);
 		rc = -EINVAL;
@@ -1423,4 +1423,3 @@ u32 hfi_process_msg_packet(
 	}
 	return rc;
 }
-

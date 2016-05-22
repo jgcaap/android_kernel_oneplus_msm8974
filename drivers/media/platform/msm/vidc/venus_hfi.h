@@ -22,6 +22,7 @@
 #include <mach/iommu_domains.h>
 
 #include "vidc_hfi_api.h"
+#include "msm_smem.h"
 #include "vidc_hfi_helper.h"
 #include "vidc_hfi_api.h"
 #include "vidc_hfi.h"

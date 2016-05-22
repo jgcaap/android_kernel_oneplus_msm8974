@@ -15,10 +15,11 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <asm/div64.h>
-#include <soc/qcom/subsystem_restart.h>
-#include <linux/kernel.h>
+#include <mach/subsystem_restart.h>
+
 #include "msm_vidc_common.h"
 #include "vidc_hfi_api.h"
+#include "msm_smem.h"
 #include "msm_vidc_debug.h"
 
 #define IS_ALREADY_IN_STATE(__p, __d) ({\
@@ -1304,7 +1305,7 @@ static void handle_fbd(enum command_response cmd, void *data)
 					fill_buf_done->filled_len1,
 					fill_buf_done->timestamp_hi,
 					fill_buf_done->timestamp_lo);
- 		}
+		}
 		vb->v4l2_buf.timestamp =
 			ns_to_timeval(time_usec * NSEC_PER_USEC);
 		vb->v4l2_buf.flags = 0;
@@ -1323,7 +1324,7 @@ static void handle_fbd(enum command_response cmd, void *data)
 		if (fill_buf_done->flags1 & HAL_BUFFERFLAG_READONLY)
 			vb->v4l2_buf.flags |= V4L2_QCOM_BUF_FLAG_READONLY;
 		if (fill_buf_done->flags1 & HAL_BUFFERFLAG_EOS)
-			vb->v4l2_buf.flags |= V4L2_QCOM_BUF_FLAG_EOS;
+			vb->v4l2_buf.flags |= V4L2_BUF_FLAG_EOS;
 		if (fill_buf_done->flags1 & HAL_BUFFERFLAG_CODECCONFIG)
 			vb->v4l2_buf.flags &= ~V4L2_QCOM_BUF_FLAG_CODECCONFIG;
 		if (fill_buf_done->flags1 & HAL_BUFFERFLAG_SYNCFRAME)
@@ -1406,7 +1407,7 @@ static void handle_fbd(enum command_response cmd, void *data)
 					struct vb2_buffer, queued_entry);
 				vb->v4l2_planes[0].bytesused = 0;
 				vb->v4l2_planes[0].data_offset = 0;
-				vb->v4l2_buf.flags |= V4L2_QCOM_BUF_FLAG_EOS;
+				vb->v4l2_buf.flags |= V4L2_BUF_FLAG_EOS;
 				mutex_lock(&q->lock);
 				vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
 				mutex_unlock(&q->lock);
@@ -2193,10 +2194,10 @@ static int set_output_buffers(struct msm_vidc_inst *inst,
 				buffer_info.extradata_size =
 					extradata_buf->buffer_size;
 			}
-			dprintk(VIDC_DBG, "Output buffer address: 0x%pa\n",
-					&buffer_info.align_device_addr);
-			dprintk(VIDC_DBG, "Output extradata address: 0x%pa\n",
-					&buffer_info.extradata_addr);
+			dprintk(VIDC_DBG, "Output buffer address: %x",
+					buffer_info.align_device_addr);
+			dprintk(VIDC_DBG, "Output extradata address: %x",
+					buffer_info.extradata_addr);
 			rc = call_hfi_op(hdev, session_set_buffers,
 					(void *) inst->session, &buffer_info);
 			mutex_unlock(&inst->lock);
@@ -2576,7 +2577,7 @@ int msm_comm_qbuf(struct vb2_buffer *vb)
 		}
 		if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 			frame_data.buffer_type = HAL_BUFFER_INPUT;
-			if (vb->v4l2_buf.flags & V4L2_QCOM_BUF_FLAG_EOS) {
+			if (vb->v4l2_buf.flags & V4L2_BUF_FLAG_EOS) {
 				frame_data.flags |= HAL_BUFFERFLAG_EOS;
 				dprintk(VIDC_DBG,
 					"Received EOS on output capability\n");
@@ -3286,7 +3287,7 @@ enum hal_extradata_id msm_comm_get_hal_extradata_index(
 	case V4L2_MPEG_VIDC_EXTRADATA_METADATA_FILLER:
 		ret = HAL_EXTRADATA_METADATA_FILLER;
 		break;
-	case V4L2_MPEG_VIDC_EXTRADATA_ASPECT_RATIO:
+	case V4L2_MPEG_VIDC_INDEX_EXTRADATA_ASPECT_RATIO:
 		ret = HAL_EXTRADATA_ASPECT_RATIO;
 		break;
 	case V4L2_MPEG_VIDC_EXTRADATA_MPEG2_SEQDISP:

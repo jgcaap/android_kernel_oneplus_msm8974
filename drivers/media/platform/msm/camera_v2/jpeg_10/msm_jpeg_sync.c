@@ -16,6 +16,7 @@
 #include <linux/list.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
+#include <linux/ratelimit.h>
 #include <media/msm_jpeg.h>
 #include "msm_jpeg_sync.h"
 #include "msm_jpeg_core.h"
@@ -105,7 +106,7 @@ inline int msm_jpeg_q_in_buf(struct msm_jpeg_q *q_p,
 
 inline int msm_jpeg_q_wait(struct msm_jpeg_q *q_p)
 {
-	long tm = MAX_SCHEDULE_TIMEOUT; /* 500ms */
+	int tm = MAX_SCHEDULE_TIMEOUT; /* 500ms */
 	int rc;
 
 	JPEG_DBG("%s:%d] %s wait\n", __func__, __LINE__, q_p->name);
@@ -669,6 +670,8 @@ int msm_jpeg_ioctl_hw_cmd(struct msm_jpeg_device *pgmn_dev,
 			JPEG_PR_ERR("%s:%d] failed\n", __func__, __LINE__);
 			return -EFAULT;
 		}
+	} else {
+		return is_copy_to_user;
 	}
 
 	return 0;
@@ -809,7 +812,7 @@ int msm_jpeg_ioctl_test_dump_region(struct msm_jpeg_device *pgmn_dev,
 }
 
 int msm_jpeg_ioctl_set_clk_rate(struct msm_jpeg_device *pgmn_dev,
-	void * __user arg)
+	unsigned long arg)
 {
 	long clk_rate;
 	int rc;
@@ -819,7 +822,7 @@ int msm_jpeg_ioctl_set_clk_rate(struct msm_jpeg_device *pgmn_dev,
 		JPEG_PR_ERR("%s:%d] failed\n", __func__, __LINE__);
 		return -EFAULT;
 	}
-	if (get_user(clk_rate, (unsigned int __user *)arg)) {
+	if (get_user(clk_rate, (long __user *)arg)) {
 		JPEG_PR_ERR("%s:%d] failed\n", __func__, __LINE__);
 		return -EFAULT;
 	}
@@ -908,17 +911,17 @@ long __msm_jpeg_ioctl(struct msm_jpeg_device *pgmn_dev,
 		break;
 
 	case MSM_JPEG_IOCTL_SET_CLK_RATE:
-		rc = msm_jpeg_ioctl_set_clk_rate(pgmn_dev, (void __user *) arg);
+		rc = msm_jpeg_ioctl_set_clk_rate(pgmn_dev, arg);
 		break;
 	default:
-		JPEG_PR_ERR(KERN_INFO "%s:%d] cmd = %d not supported\n",
+		pr_err_ratelimited("%s:%d] cmd = %d not supported\n",
 			__func__, __LINE__, _IOC_NR(cmd));
 		rc = -EINVAL;
 		break;
 	}
 	return rc;
 }
-#ifdef CONFIG_MSM_IOMMU
+
 static int camera_register_domain(void)
 {
 	struct msm_iova_partition camera_fw_partition = {
@@ -934,17 +937,13 @@ static int camera_register_domain(void)
 	};
 	return msm_register_domain(&camera_fw_layout);
 }
-#endif
 
 int __msm_jpeg_init(struct msm_jpeg_device *pgmn_dev)
 {
-	int rc = 0;
+	int rc = 0, i = 0, j = 0;
 	int idx = 0;
-#ifdef CONFIG_MSM_IOMMU
-	int i = 0, j = 0;
 	char *iommu_name[JPEG_DEV_CNT] = {"jpeg_enc0", "jpeg_enc1",
 		"jpeg_dec"};
-#endif
 
 	mutex_init(&pgmn_dev->lock);
 
@@ -993,9 +992,7 @@ int __msm_jpeg_init(struct msm_jpeg_device *pgmn_dev)
 #endif
 
 	return rc;
-#ifdef CONFIG_MSM_IOMMU
 error:
-#endif
 	mutex_destroy(&pgmn_dev->lock);
 	return -EFAULT;
 }

@@ -12,7 +12,7 @@
 */
 #include <linux/msm_mdp.h>
 #include <linux/slab.h>
-#include <linux/msm_iommu_domains.h>
+#include <mach/iommu_domains.h>
 #include <media/videobuf2-core.h>
 #include "enc-subdev.h"
 #include "mdp-subdev.h"
@@ -193,7 +193,6 @@ static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 	struct mem_region_map *mmap = arg;
 	struct mem_region *mregion;
 	int domain = -1;
-	dma_addr_t paddr;
 	struct mdp_instance *inst = NULL;
 
 	if (!mmap || !mmap->mregion || !mmap->cookie) {
@@ -224,7 +223,8 @@ static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 					MDP_IOMMU_DOMAIN_NS);
 
 	rc = ion_map_iommu(mmap->ion_client, mregion->ion_handle,
-			domain, 0, align, 0, &paddr,
+			domain, 0, align, 0,
+			&mregion->paddr,
 			(unsigned long *)&mregion->size,
 			0, 0);
 	if (rc) {
@@ -232,7 +232,6 @@ static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 				!inst->secure ? "non" : "", rc);
 		goto iommu_fail;
 	}
-	mregion->paddr = dma_addr_to_void_ptr(paddr);
 	msm_fb_writeback_iommu_ref(inst->mdp, false);
 
 	return 0;
