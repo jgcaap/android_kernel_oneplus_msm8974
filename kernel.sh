@@ -12,7 +12,7 @@ clear
 THREAD="-j$(grep -c ^processor /proc/cpuinfo)"
 KERNEL="zImage"
 DTBIMAGE="dtb"
-DEFCONFIG="cyanogenmod_bacon_defconfig"
+DEFCONFIG="lineageos_bacon_defconfig"
 
 # Kernel Details
 BASE_AK_VER="0.1"
@@ -21,7 +21,7 @@ AK_VER="$BASE_AK_VER$VER"
 
 # Vars
 
-export CROSS_COMPILE=${HOME}/cm141/prebuilts/gcc/linux-x86/arm/arm-eabi-4.9/bin/arm-eabi-
+export CROSS_COMPILE=${HOME}/lineageos/prebuilts/gcc/linux-x86/arm/arm-eabi-4.9/bin/arm-eabi-
 export ARCH=arm
 export SUBARCH=arm
 export KBUILD_BUILD_USER=jgcaap
@@ -33,7 +33,7 @@ REPACK_DIR="${HOME}/new/anykernel"
 PATCH_DIR="${HOME}/new/anykernel"
 MODULES_DIR="${HOME}/new/modules"
 ZIP_MOVE="${HOME}/new/out"
-ZIMAGE_DIR="${HOME}/new/kernel/arch/arm/boot"
+ZIMAGE_DIR="${HOME}/lineageos/kernel/oneplus/msm8974/arch/arm/boot"
 
 # Functions
 function clean_all {
@@ -59,7 +59,7 @@ function make_modules {
 }
 
 function make_dtb {
-		/home/jorge/new/anykernel/tools/dtbToolCM -2 -o /home/jorge/new/anykernel/dtb -s 2048 -p /home/jorge/new/kernel/scripts/dtc/ /home/jorge/new/kernel/arch/arm/boot/
+		/home/jorge/new/anykernel/tools/dtbToolCM -2 -o /home/jorge/new/anykernel/dtb -s 2048 -p /home/jorge/lineageos/kernel/oneplus/msm8974/scripts/dtc/ /home/jorge/lineageos/kernel/oneplus/msm8974/arch/arm/boot/
 }
 
 function make_zip {
@@ -129,5 +129,5 @@ DATE_END=$(date +"%s")
 DIFF=$(($DATE_END - $DATE_START))
 echo "Time: $(($DIFF / 60)) minute(s) and $(($DIFF % 60)) seconds."
 echo
-mv ~/new/out/newKernel-CM12-.zip ~/files/oneplusone/kernel/newKernel-CM14.1-4.05-coloros.zip
+mv ~/new/out/newKernel-CM12-.zip ~/files/oneplusone/kernel/newKernel-CM14.1-4.06-os.zip
 #/etc/script/md5.sh
